@@ -10,15 +10,68 @@ using Verse;
 
 namespace PreemptiveStrike.Harmony
 {
+    [HarmonyPatch(typeof(IncidentWorker), "TryExecute")]
+    class Patch_IncidentWorker_TryExecute
+    {
+
+        [HarmonyPrefix]
+        static bool Prefix(IncidentWorker __instance, ref bool __result, IncidentParms parms)
+        {
+            //TODO: This is for the ship part incident
+            //I have no choice but do the patch like this
+            //'cause the incidentworker for shippart is an internal class
+            //and manual patching doesn't work
+            var def = __instance.def;
+            if (def != DefDatabase<IncidentDef>.GetNamed("PsychicEmanatorShipPartCrash") && def != DefDatabase<IncidentDef>.GetNamed("PoisonShipPartCrash"))
+                return true;
+            if (IncidentInterceptorUtility.IsIntercepting_ShipPart == WorkerPatchType.ExecuteOrigin)
+                return true;
+            else
+            {
+                if (!IncidentInterceptorUtility.Intercept_SkyFaller<InterceptedIncident_SkyFaller_ShipPartCrash>(__instance.def, parms))
+                    return true;
+                __result = true;
+                return false;
+            }
+        }
+
+        static void Postfix(ref bool __result)
+        {
+            if (IncidentInterceptorUtility.IsHoaxingStoryTeller)
+            {
+                __result = true;
+                IncidentInterceptorUtility.IsHoaxingStoryTeller = false;
+            }
+        }
+    }
+
+    //This patch is made for all the raid incidents to help them get the right incidentDef
+    [HarmonyPatch(typeof(IncidentWorker_RaidEnemy), "TryExecuteWorker")]
+    class Patch_RaidEnemy_TryExecuteWorker
+    {
+        [HarmonyPrefix]
+        static void Prefix(IncidentWorker_RaidEnemy __instance)
+        {
+            IncidentInterceptorUtility.CurrentIncidentDef = __instance.def;
+        }
+    }
+
+    //----------------------------------------------------------
+
+    #region Raid Patches
     [HarmonyPatch(typeof(PawnsArrivalModeWorker_EdgeWalkIn), "TryResolveRaidSpawnCenter")]
     static class Patch_EdgeWalkIn_TryResolveRaidSpawnCenter
     {
         [HarmonyPostfix]
         static void Postfix(PawnsArrivalModeWorker_EdgeWalkIn __instance, IncidentParms parms, ref bool __result)
         {
+            //This is a temporary fix for refugee chased
+            if (IncidentInterceptorUtility.IncidentInQueue(parms, IncidentDefOf.RaidEnemy))
+                return;
+
             if (IncidentInterceptorUtility.IsIntercepting_IncidentExcecution)
             {
-                if(IncidentInterceptorUtility.Intercept_Raid(parms))
+                if (IncidentInterceptorUtility.Intercept_Raid(parms))
                     __result = false;
             }
         }
@@ -37,7 +90,9 @@ namespace PreemptiveStrike.Harmony
             }
         }
     }
+    #endregion
 
+    #region Pawn Generation Patches
     [HarmonyPatch(typeof(PawnGroupMakerUtility), "GeneratePawns")]
     static class Patch_PawnGroupMakerUtility_GeneratePawns
     {
@@ -71,6 +126,9 @@ namespace PreemptiveStrike.Harmony
             return false;
         }
     }
+    #endregion
+
+    #region Human Netral Patch
 
     [HarmonyPatch(typeof(IncidentWorker_TraderCaravanArrival), "TryExecuteWorker")]
     static class Patch_IncidentWorker_TraderCaravanArrival_TryExecuteWorker
@@ -79,7 +137,7 @@ namespace PreemptiveStrike.Harmony
         static bool Prefix(IncidentWorker_TraderCaravanArrival __instance, ref bool __result, IncidentParms parms)
         {
             if (IncidentInterceptorUtility.isIntercepting_TraderCaravan_Worker)
-                IncidentInterceptorUtility.CreateIncidentCaraven_HumanNeutral<InterceptedIncident_HumanCrowd_TraderCaravan>(IncidentDefOf.TraderCaravanArrival, parms);
+                return !IncidentInterceptorUtility.CreateIncidentCaraven_HumanNeutral<InterceptedIncident_HumanCrowd_TraderCaravan>(__instance.def, parms);
             return true;
         }
     }
@@ -91,7 +149,7 @@ namespace PreemptiveStrike.Harmony
         static bool Prefix(IncidentWorker_TravelerGroup __instance, ref bool __result, IncidentParms parms)
         {
             if (IncidentInterceptorUtility.isIntercepting_TravelerGroup)
-                IncidentInterceptorUtility.CreateIncidentCaraven_HumanNeutral<InterceptedIncident_HumanCrowd_TravelerGroup>(IncidentDefOf.TravelerGroup, parms);
+                return !IncidentInterceptorUtility.CreateIncidentCaraven_HumanNeutral<InterceptedIncident_HumanCrowd_TravelerGroup>(__instance.def, parms);
             return true;
         }
     }
@@ -103,11 +161,13 @@ namespace PreemptiveStrike.Harmony
         static bool Prefix(IncidentWorker_VisitorGroup __instance, ref bool __result, IncidentParms parms)
         {
             if (IncidentInterceptorUtility.isIntercepting_VisitorGroup)
-                IncidentInterceptorUtility.CreateIncidentCaraven_HumanNeutral<InterceptedIncident_HumanCrowd_VisitorGroup>(IncidentDefOf.VisitorGroup, parms);
+                return !IncidentInterceptorUtility.CreateIncidentCaraven_HumanNeutral<InterceptedIncident_HumanCrowd_VisitorGroup>(__instance.def, parms);
             return true;
         }
     }
+    #endregion
 
+    #region  Animal Incident Patch
     [HarmonyPatch(typeof(IncidentWorker_FarmAnimalsWanderIn), "TryExecuteWorker")]
     static class Patch_IncidentWorker_FarmAnimalsWanderIn_TryExecuteWorker
     {
@@ -118,8 +178,8 @@ namespace PreemptiveStrike.Harmony
                 return true;
             if (IncidentInterceptorUtility.isIntercepting_FarmAnimalsWanderIn == WorkerPatchType.Forestall)
             {
-                IncidentInterceptorUtility.CreateIncidentCaravan_Animal<InterceptedIncident_AnimalHerd_FarmAnimalsWanderIn>(DefDatabase<IncidentDef>.GetNamed("FarmAnimalsWanderIn"), parms);
-                __result = false;
+                IncidentInterceptorUtility.CreateIncidentCaravan_Animal<InterceptedIncident_AnimalHerd_FarmAnimalsWanderIn>(__instance.def, parms);
+                __result = true;
             }
             else
                 __result = IncidentInterceptorUtility.tmpIncident.SubstituionWorkerExecution();
@@ -137,8 +197,8 @@ namespace PreemptiveStrike.Harmony
                 return true;
             if (IncidentInterceptorUtility.isIntercepting_HerdMigration == WorkerPatchType.Forestall)
             {
-                IncidentInterceptorUtility.CreateIncidentCaravan_Animal<InterceptedIncident_AnimalHerd_HerdMigration>(DefDatabase<IncidentDef>.GetNamed("HerdMigration"), parms);
-                __result = false;
+                IncidentInterceptorUtility.CreateIncidentCaravan_Animal<InterceptedIncident_AnimalHerd_HerdMigration>(__instance.def, parms);
+                __result = true;
             }
             else
                 __result = IncidentInterceptorUtility.tmpIncident.SubstituionWorkerExecution();
@@ -156,8 +216,8 @@ namespace PreemptiveStrike.Harmony
                 return true;
             if (IncidentInterceptorUtility.isIntercepting_ThrumboPasses == WorkerPatchType.Forestall)
             {
-                IncidentInterceptorUtility.CreateIncidentCaravan_Animal<InterceptedIncident_AnimalHerd_ThrumboPasses>(DefDatabase<IncidentDef>.GetNamed("ThrumboPasses"), parms);
-                __result = false;
+                IncidentInterceptorUtility.CreateIncidentCaravan_Animal<InterceptedIncident_AnimalHerd_ThrumboPasses>(__instance.def, parms);
+                __result = true;
             }
             else
                 __result = IncidentInterceptorUtility.tmpIncident.SubstituionWorkerExecution();
@@ -167,14 +227,14 @@ namespace PreemptiveStrike.Harmony
 
     static class Patch_IncidentWorker_Alphabeavers_TryExecuteWorker
     {
-        public static bool Prefix(Object __instance, ref bool __result, IncidentParms parms)
+        public static bool Prefix(IncidentWorker __instance, ref bool __result, IncidentParms parms)
         {
             if (IncidentInterceptorUtility.isIntercepting_Alphabeavers == WorkerPatchType.ExecuteOrigin)
                 return true;
             if (IncidentInterceptorUtility.isIntercepting_Alphabeavers == WorkerPatchType.Forestall)
             {
-                IncidentInterceptorUtility.CreateIncidentCaravan_Animal<InterceptedIncident_AnimalHerd_Alphabeavers>(DefDatabase<IncidentDef>.GetNamed("Alphabeavers"), parms);
-                __result = false;
+                IncidentInterceptorUtility.CreateIncidentCaravan_Animal<InterceptedIncident_AnimalHerd_Alphabeavers>(__instance.def, parms);
+                __result = true;
             }
             else
                 __result = IncidentInterceptorUtility.tmpIncident.SubstituionWorkerExecution();
@@ -192,12 +252,13 @@ namespace PreemptiveStrike.Harmony
                 return true;
             if (IncidentInterceptorUtility.isIntercepting_ManhunterPack == WorkerPatchType.Forestall)
             {
-                IncidentInterceptorUtility.CreateIncidentCaravan_Animal<InterceptedIncident_AnimalHerd_ManhunterPack>(IncidentDefOf.ManhunterPack, parms);
-                __result = false;
+                IncidentInterceptorUtility.CreateIncidentCaravan_Animal<InterceptedIncident_AnimalHerd_ManhunterPack>(__instance.def, parms);
+                __result = true;
             }
             else
                 __result = IncidentInterceptorUtility.tmpIncident.SubstituionWorkerExecution();
             return false;
         }
     }
+    #endregion
 }

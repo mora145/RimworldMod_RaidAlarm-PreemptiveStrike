@@ -7,6 +7,7 @@ using Verse;
 using PreemptiveStrike.IncidentCaravan;
 using PreemptiveStrike.RaidGoal;
 using PreemptiveStrike.Mod;
+using PreemptiveStrike.DetectionSystem;
 
 namespace PreemptiveStrike.Interceptor
 {
@@ -27,6 +28,8 @@ namespace PreemptiveStrike.Interceptor
     [StaticConstructorOnStartup]
     class IncidentInterceptorUtility
     {
+        public static IncidentDef CurrentIncidentDef;//This is used for all the raid incidents, because incidentDef can not be obtained from PawnsArrivalModeWorker
+
         #region Intercepting Switches
         //Used in harmony Patches
         public static bool IsIntercepting_IncidentExcecution;
@@ -59,6 +62,7 @@ namespace PreemptiveStrike.Interceptor
         public static WorkerPatchType IsIntercepting_TransportPod;
         public static WorkerPatchType IsIntercepting_ResourcePod;
         public static WorkerPatchType IsIntercepting_Infestation;
+        public static WorkerPatchType IsIntercepting_SolarFlare;
 
         public static bool IsHoaxingStoryTeller;
         #endregion
@@ -102,6 +106,7 @@ namespace PreemptiveStrike.Interceptor
             IsIntercepting_TransportPod = WorkerPatchType.Forestall;
             IsIntercepting_ResourcePod = WorkerPatchType.Forestall;
             IsIntercepting_Infestation = WorkerPatchType.Forestall;
+            IsIntercepting_SolarFlare = WorkerPatchType.Forestall;
 
             IsHoaxingStoryTeller = false;
         }
@@ -115,7 +120,14 @@ namespace PreemptiveStrike.Interceptor
                 incident = new InterceptedIncident_HumanCrowd_RaidEnemy_Groups();
             else
                 incident = new InterceptedIncident_HumanCrowd_RaidEnemy();
-            incident.incidentDef = IncidentDefOf.RaidEnemy;
+
+            if (CurrentIncidentDef == null)
+            {
+                Log.Error("PES: A raid incident that is not compatible with Preemptive Strike is trying to execute. So this incident won't be intercepted by PES and will be executed in it vanilla way");
+                return false; //Fix v1.1.4: In some mods, their raids are implemented without a incidentworker
+            }
+
+            incident.incidentDef = CurrentIncidentDef;
             incident.parms = parms;
             if (!incident.ManualDeterminParams())
                 return false;
@@ -131,12 +143,13 @@ namespace PreemptiveStrike.Interceptor
             return true;
         }
 
-        public static bool CreateIncidentCaraven_HumanNeutral<T>(IncidentDef incidentDef, IncidentParms parms) where T : InterceptedIncident, new()
+        public static bool CreateIncidentCaraven_HumanNeutral<T>(IncidentDef incidentDef,  IncidentParms parms) where T : InterceptedIncident, new()
         {
             InterceptedIncident incident = new T();
             incident.incidentDef = incidentDef;
             incident.parms = parms;
-            IsIntercepting_PawnGeneration = GeneratorPatchFlag.ReturnZero;
+            if (!incident.ManualDeterminParams())
+                return false;
             if (!IncidentCaravanUtility.AddNewIncidentCaravan(incident))
             {
                 Log.Error("Fail to create Incident Caravan");
@@ -145,6 +158,7 @@ namespace PreemptiveStrike.Interceptor
             IsHoaxingStoryTeller = true;
             if (PES_Settings.DebugModeOn)
                 Messages.Message("PES_Debug: Successfully intercepted a neutral Incident", MessageTypeDefOf.NeutralEvent);
+            //IsIntercepting_PawnGeneration = GeneratorPatchFlag.ReturnZero;
             return true;
         }
 
@@ -160,14 +174,24 @@ namespace PreemptiveStrike.Interceptor
                 Log.Error("Fail to create Incident Caravan");
                 return false;
             }
-            IsHoaxingStoryTeller = true;
+            //Hoxing Should be done in the patch
+            //IsHoaxingStoryTeller = true;
             if (PES_Settings.DebugModeOn)
                 Messages.Message("PES_Debug: Successfully intercepted an animal Incident", MessageTypeDefOf.NeutralEvent);
             return true;
         }
 
-        public static bool Intercept_SkyFaller<T>(IncidentDef incidentDef, IncidentParms parms) where T : InterceptedIncident_SkyFaller, new()
+        public static bool Intercept_SkyFaller<T>(IncidentDef incidentDef, IncidentParms parms, bool needHoaxing = false, bool checkHostileFaction = false) where T : InterceptedIncident_SkyFaller, new()
         {
+            if (checkHostileFaction && parms.faction.PlayerRelationKind != FactionRelationKind.Hostile)
+                return false;
+
+            if (incidentDef == null)
+            {
+                Log.Error("PES: A raid incident that is not compatible with Preemptive Strike is trying to execute. So this incident won't be intercepted by PES and will be executed in it vanilla way");
+                return false;
+            }
+
             InterceptedIncident_SkyFaller incident = new T();
             incident.incidentDef = incidentDef;
             incident.parms = parms;
@@ -186,7 +210,8 @@ namespace PreemptiveStrike.Interceptor
                 Log.Error("Fail to create Incident Caravan");
                 return false;
             }
-            IsHoaxingStoryTeller = true;
+            if(needHoaxing)
+                IsHoaxingStoryTeller = true;
             if (PES_Settings.DebugModeOn)
                 Messages.Message("PES_Debug: Successfully intercepted a skyfaller Incident", MessageTypeDefOf.NeutralEvent);
             return true;
@@ -220,15 +245,21 @@ namespace PreemptiveStrike.Interceptor
 
         public static bool Intercept_SolarFlare(IncidentParms parms)
         {
-            foreach(QueuedIncident qi in Find.Storyteller.incidentQueue)
+            if (DetectDangerUtilities.LastSolarFlareDetectorTick != Find.TickManager.TicksGame)
+                return false;
+
+            InterceptedIncident_SolarFlare incident = new InterceptedIncident_SolarFlare();
+            incident.incidentDef = DefDatabase<IncidentDef>.GetNamed("SolarFlare");
+            incident.parms = parms;
+            if(!IncidentCaravanUtility.AddSimpleIncidentCaravan(incident, 2500 * 12,0,true))
             {
-                if (qi.FiringIncident.def == IncidentDefOf.SolarFlare && qi.FiringIncident.parms == parms)
-                    return false;
+                Log.Error("Fail to create Incident Caravan");
+                return false;
             }
-            Find.Storyteller.incidentQueue.Add(new QueuedIncident(new FiringIncident(IncidentDefOf.SolarFlare, null, parms), Find.TickManager.TicksGame + 2500 * 12));
             if (PES_Settings.DebugModeOn)
-                Messages.Message("PES_Debug: Successfully intercepted an solar flare",MessageTypeDefOf.NeutralEvent);
+                Messages.Message("PES_Debug: Successfully intercepted an solar flare", MessageTypeDefOf.NeutralEvent);
             Dialogue.OpenUILetter.Make("PES_Warning_Flare_Early".Translate(), "PES_Warning_Flare_Early_Text".Translate(), LetterDefOf.NegativeEvent);
+            IsHoaxingStoryTeller = true;
             return true;
         }
 
@@ -254,6 +285,15 @@ namespace PreemptiveStrike.Interceptor
             return list;
         }
 
+        public static bool IncidentInQueue(IncidentParms parms, IncidentDef incidentDef)
+        {
+            foreach(QueuedIncident qi in Find.Storyteller.incidentQueue)
+            {
+                if (qi.FiringIncident.parms == parms && qi.FiringIncident.def == incidentDef)
+                    return true;
+            }
+            return false;
+        }
         
     }
 }
